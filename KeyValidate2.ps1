@@ -53,11 +53,15 @@ Import-Module -Name .\KeyValidate.psm1
 
 
 If ($mode -eq "full" -or $mode -eq "attest"){
+    write-host ""
+    Write-host " ******************"
+    Write-host " Attestation for VM"
+    Write-host " ******************"
     #attesting the client 
     $Path=Preqs #loading prerequisits
     LoadJWTModule #loading the JWT modules
-    $report=Attest -Path $path -attestationTenant $attestationTenant
-    Write-host " Validating Claims"
+    $attestedPlatformReportJwt=Attest -Path $path -attestationTenant $attestationTenant
+    $report = Get-JWTDetails($attestedPlatformReportJwt)  
     If ($Report){
         $xmsattestationtype=$Report.'x-ms-attestation-type'
         $xmsazurevmvmid=$Report.'x-ms-azurevm-vmid'
@@ -75,6 +79,10 @@ If ($mode -eq "full" -or $mode -eq "attest"){
     }
 }
 if ($mode -eq "key" -or $mode -eq "full"){
+    write-host ""
+    Write-host " *********************"
+    Write-host " Key Policy Validation"
+    Write-host " *********************"
     #need to load preq's for key retrieval - including Az modules
     LoadJWTModule
     ValidateAZModule
@@ -86,7 +94,9 @@ if ($mode -eq "key" -or $mode -eq "full"){
 }
 
 if ($mode -eq "full"){
-
+    Write-host " ********************************************"
+    Write-host " Key Policy to VM Attestion Report Validation"
+    Write-host " ********************************************"
         #get all claims from the key policy and validate if those match with the VM attestation report
         [array]$allClaims=Get-AllClaims -JsonObject $jsonObject
         $match=$null
@@ -102,47 +112,83 @@ if ($mode -eq "full"){
                 }elseif($splitclaim.count -eq 2){
                     if ($Report.($splitclaim[0].ToString()).($splitclaim[1].ToString())){    
                         if ($Report.($splitclaim[0].ToString()).($splitclaim[1].ToString()) -eq $claim.Equals) {
-                            write-host "Report: " -NoNewline -ForegroundColor Blue
-                            write-host $Report.($splitclaim[0].ToString()).($splitclaim[1].ToString()) -ForegroundColor Green
                             write-host "Claim:  "   -NoNewline -ForegroundColor Blue
                             write-host $claim.Equals  -ForegroundColor Green
+                            write-host "Report: " -NoNewline -ForegroundColor Blue
+                            write-host $Report.($splitclaim[0].ToString()).($splitclaim[1].ToString()) -ForegroundColor Green
                             If ($match -eq $null){
                                 $match=$true
                             }
                         }else{
-                            write-host "Report: " -NoNewline -ForegroundColor Blue
-                            Write-host $Report.($splitclaim[0].ToString()).($splitclaim[1].ToString()) -ForegroundColor Red
                             write-host "Claim:  "  -NoNewline -ForegroundColor Blue
                             Write-host $claim.Equals  -ForegroundColor Red
+                            write-host "Report: " -NoNewline -ForegroundColor Blue
+                            Write-host $Report.($splitclaim[0].ToString()).($splitclaim[1].ToString()) -ForegroundColor Red
                             If ($match -eq $true -or $match -eq $null){
                                 $match=$false
                             }
                         }    
+                    }else{
+                        write-host "Claim:  "   -NoNewline -ForegroundColor Blue
+                        write-host $claim.Equals  -ForegroundColor Green
+                        write-host "Report: " -NoNewline -ForegroundColor Blue
+                        write-host "<missing>" -NoNewline -ForegroundColor Red
+
+                        If ($match -eq $true -or $match -eq $null){
+                            $match=$false
+                        }
                     }
                 }else{
                     if ($Report.($claim.claim)){
                         if ($Report.($claim.claim) -eq $claim.Equals){
-                            write-host "Report: " -NoNewline -ForegroundColor Blue
-                            Write-host $Report.($claim.claim) -ForegroundColor Green
                             write-host "Claim:  "  -NoNewline -ForegroundColor Blue
                             Write-host $claim.Equals -ForegroundColor Green
+                            write-host "Report: " -NoNewline -ForegroundColor Blue
+                            Write-host $Report.($claim.claim) -ForegroundColor Green
+
                             If ($match -eq $null){
                                 $match=$true
                             }
                         }else{
-                            write-host "Report: "  -NoNewline -ForegroundColor Blue
-                            write-host $Report.($claim.claim) -ForegroundColor Red
                             write-host "Claim:  "   -NoNewline -ForegroundColor Blue
                             write-host $claim.Equals -ForegroundColor Red
+                            write-host "Report: "  -NoNewline -ForegroundColor Blue
+                            write-host $Report.($claim.claim) -ForegroundColor Red
                             If ($match -eq $true -or $match -eq $null){
                                 $match=$false
                             }
                         }
-
+                    }else{
+                        write-host "Claim:  "   -NoNewline -ForegroundColor Blue
+                        write-host $claim.Equals -ForegroundColor Red
+                        write-host "Report: "   -NoNewline -ForegroundColor Blue
+                        write-host "<missing>" -ForegroundColor Red
+                        If ($match -eq $true -or $match -eq $null){
+                            $match=$false
+                        }
+                        
                     }
+
                 }
             }
 
+        }
+        #Authority matching
+        $authorityMatch=$false
+        write-host "Validating " -ForegroundColor Blue -NoNewline
+        write-host "authority"
+        [array]$Authority=Get-Authority -JsonObject $jsonObject
+        if ($Authority -eq $report.iss){
+            write-host "Claim:  "   -NoNewline -ForegroundColor Blue
+            write-host $Authority -ForegroundColor Green
+            write-host "Report: "   -NoNewline -ForegroundColor Blue
+            write-host $Report.iss -ForegroundColor Green
+            $authorityMatch=$true
+        }else{
+            write-host "Claim:  "   -NoNewline -ForegroundColor Blue
+            write-host $Authority -ForegroundColor Yellow
+            write-host "Report: "   -NoNewline -ForegroundColor Blue
+            write-host $Report.iss -ForegroundColor Yellow
         }
  
     if ($match) {
@@ -152,9 +198,62 @@ if ($mode -eq "full"){
         Write-host ""
         Write-host "VM attestation DOES NOT MEET key requirements" -ForegroundColor Red
     }
+    if (!($authorityMatch)){
+        Write-host "Validate the authority URL's they have a mismatch" -ForegroundColor Yellow
+    }
 
-            
+    $kvAccessToken=GetToken -KeyURL $KeyURL
+    #decode the token to get to the identities
+    $ATObject=Get-JWTDetails($kvAccessToken)
+    Write-host "AppID: " -NoNewline -ForegroundColor Blue
+    write-host $ATObject.appid
 
+    $Key=($KeyURL -split "/")
+    $vaultBaseUrl=($key[0] + "//" + $key[2])
+    $KeyDetail=$keyUrl -split "/keys/" -split "/"
+    $KeyName=$Keydetail[3]
+    $KeyVersion=$KeyDetail[4]
+    if ([string]::IsNullOrEmpty($keyVersion)) {
+        $kvReleaseKeyUrl = "{0}/keys/{1}/release?api-version=7.3" -f $vaultBaseUrl, $keyName
+    }else{
+        $kvReleaseKeyUrl = "{0}/keys/{1}/{2}/release?api-version=7.3" -f $vaultBaseUrl, $keyName, $keyVersion
+    }
+    
+    $kvReleaseKeyHeaders = @{
+        Authorization  = "Bearer $kvAccessToken"
+        'Content-Type' = 'application/json'
+    }
+    
+    $kvReleaseKeyBody = @{
+        target = $attestedPlatformReportJwt
+    }
+    $kvReleaseKeyResponse = Invoke-WebRequest -Method POST -Uri $kvReleaseKeyUrl -Headers $kvReleaseKeyHeaders -Body ($kvReleaseKeyBody | ConvertTo-Json)
+    if ($kvReleaseKeyResponse.StatusCode -ne 200) {
+        Write-Error -Message "Unable to perform release key operation."
+        Write-Error -Message $kvReleaseKeyResponse.Content
+    }
+    else {
+        $kvReleaseKeyResponse.Content | ConvertFrom-Json
+        $retuenme=$kvReleaseKeyResponse.Content | ConvertFrom-Json
+        if ($retuenme.count -gt 1){
+            $returnValue=$retuenme[0].value
+            $values=Get-JWTDetails($returnValue)
+            $certInfo=$values.response.key.key
+            $privKey=($values.response.key.key.key_hsm -replace '[^A-Za-z0-9+/=]', '')
+            $padLength = 4 - ($cleanString.Length % 4)
+            $privKey += '=' * $padLength
+            $decodedBytes = [System.Convert]::FromBase64String($privKey)
+            $decodedText = [System.Text.Encoding]::UTF8.GetString($decodedBytes)
+
+        }
+        $cleanString = ($1.response.key.key.key_hsm -replace '[^A-Za-z0-9+/=]', '')
+        
+        
+        
+        
+        return $retuenme
+
+    }
 }
   
 
