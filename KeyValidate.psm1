@@ -27,7 +27,7 @@ Function Preqs(){
         }
     }else{
         $AttestationClientPath=$fileExists[0].DirectoryName
-        Write-host "found on path:" -NoNewline -ForegroundColor Green
+        Write-host "found " -NoNewline -ForegroundColor Green
         write-host $AttestationClientPath
         if ($env:path -split ';' -notcontains $AttestationClientPath){
             write-host " - added to environment variable" -ForegroundColor Yellow
@@ -91,6 +91,23 @@ Function LoadJWTModule(){
     }
 }
 
+Function GetToken($keyURL){
+    write-host "Retriving acces token for " -NoNewline -ForegroundColor Blue
+    if ($KeyURL -match "vault.azure"){
+            write-host "Keyvault" -NoNewline -ForegroundColor Green
+            $imdsUrl = 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://vault.azure.net'
+        }elseif($KeyURL -match ".managedhsm.azure.net"){
+            $imdsUrl = 'http://169.254.169.254/metadata/identity/oauth2/token?api-version=2018-02-01&resource=https://managedhsm.azure.net'
+        }else{
+            throw "Wrong KeyURL"
+        }  
+    $kvTokenResponse = Invoke-WebRequest -Uri  $imdsUrl -Headers @{Metadata = "true" }
+    if ($kvTokenResponse.StatusCode -ne 200) {
+        throw "Unable to get access token. Ensure Azure Managed Identity is enabled."
+    }
+    $kvAccessToken = ($kvTokenResponse.Content | ConvertFrom-Json).access_token
+    return $kvAccessToken
+}
 Function Attest($path,$attestationTenant){
     write-host "Attestation:" -ForegroundColor Blue -NoNewline
     #$attestedPlatformReportJwt = Invoke-Expression -Command $cmd
@@ -98,9 +115,8 @@ Function Attest($path,$attestationTenant){
     if (!$attestedPlatformReportJwt.StartsWith("eyJ")) {
         throw "AttestationClient failed to get an attested platform report."
     }else{
-        write-host " OK" -ForegroundColor Green -NoNewline
-        $attestationJSON = Get-JWTDetails($attestedPlatformReportJwt)   
-        return $attestationJSON
+        write-host " OK" -ForegroundColor Green -NoNewline 
+        return $attestedPlatformReportJwt
     }
     
 }
@@ -211,7 +227,34 @@ function Find-ClaimValueIterative {
     # Return null if the claim isn't found
     return $null
 }
+function Get-Authority {
+    param (
+        [Parameter(Mandatory)]
+        $JsonObject
+    )
 
+    $authorities = @()
+
+    # If the object has 'authority', collect it
+    if ($JsonObject.PSObject.Properties['authority']) {
+        $authorities += $JsonObject.PSObject.Properties['authority'].Value
+    }
+
+    # Iterate through arrays or objects
+    foreach ($property in $JsonObject.PSObject.Properties) {
+        $value = $property.Value
+
+        if ($value -is [System.Collections.IEnumerable] -and $value -isnot [string]) {
+            foreach ($item in $value) {
+                $authorities += Get-Authority -JsonObject $item
+            }
+        } elseif ($value -is [PSCustomObject]) {
+            $authorities += Get-Authority -JsonObject $value
+        }
+    }
+
+    return $authorities
+}
 function Convert-ToClaimArray {
     param (
         [Parameter(Mandatory)]
