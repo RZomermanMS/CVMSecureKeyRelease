@@ -75,7 +75,10 @@ If ($mode -eq "full" -or $mode -eq "attest"){
         Write-host " - x-ms-attestation-type' " -NoNewline -ForegroundColor blue
         write-host $xmsisolationteexmsattestationtype
         Write-host " - x-ms-compliance-status' " -NoNewline -ForegroundColor blue
-        write-host $xmsisolationteeXmscompliancestatus        
+        write-host $xmsisolationteeXmscompliancestatus       
+        If  ($mode -eq "attest"){ 
+        return $attestedPlatformReportJwt
+        }
     }
 }
 if ($mode -eq "key" -or $mode -eq "full"){
@@ -91,6 +94,9 @@ if ($mode -eq "key" -or $mode -eq "full"){
     $jsonObject = $Policy | ConvertFrom-Json
     $prettyJson = $jsonObject | ConvertTo-Json -Depth 10
     write-host $prettyJson
+    If ($mode -eq "key"){
+        return $Policy
+    }
 }
 
 if ($mode -eq "full"){
@@ -202,57 +208,53 @@ if ($mode -eq "full"){
         Write-host "Validate the authority URL's they have a mismatch" -ForegroundColor Yellow
     }
 
-    $kvAccessToken=GetToken -KeyURL $KeyURL
-    #decode the token to get to the identities
-    $ATObject=Get-JWTDetails($kvAccessToken)
-    Write-host "AppID: " -NoNewline -ForegroundColor Blue
-    write-host $ATObject.appid
+    If ($match){
+        $kvAccessToken=GetToken -KeyURL $KeyURL
+        #decode the token to get to the identities
+        $ATObject=Get-JWTDetails($kvAccessToken)
+        Write-host "AppID: " -NoNewline -ForegroundColor Blue
+        write-host $ATObject.appid
 
-    $Key=($KeyURL -split "/")
-    $vaultBaseUrl=($key[0] + "//" + $key[2])
-    $KeyDetail=$keyUrl -split "/keys/" -split "/"
-    $KeyName=$Keydetail[3]
-    $KeyVersion=$KeyDetail[4]
-    if ([string]::IsNullOrEmpty($keyVersion)) {
-        $kvReleaseKeyUrl = "{0}/keys/{1}/release?api-version=7.3" -f $vaultBaseUrl, $keyName
-    }else{
-        $kvReleaseKeyUrl = "{0}/keys/{1}/{2}/release?api-version=7.3" -f $vaultBaseUrl, $keyName, $keyVersion
-    }
-    
-    $kvReleaseKeyHeaders = @{
-        Authorization  = "Bearer $kvAccessToken"
-        'Content-Type' = 'application/json'
-    }
-    
-    $kvReleaseKeyBody = @{
-        target = $attestedPlatformReportJwt
-    }
-    $kvReleaseKeyResponse = Invoke-WebRequest -Method POST -Uri $kvReleaseKeyUrl -Headers $kvReleaseKeyHeaders -Body ($kvReleaseKeyBody | ConvertTo-Json)
-    if ($kvReleaseKeyResponse.StatusCode -ne 200) {
-        Write-Error -Message "Unable to perform release key operation."
-        Write-Error -Message $kvReleaseKeyResponse.Content
-    }
-    else {
-        $kvReleaseKeyResponse.Content | ConvertFrom-Json
-        $retuenme=$kvReleaseKeyResponse.Content | ConvertFrom-Json
-        if ($retuenme.count -gt 1){
-            $returnValue=$retuenme[0].value
-            $values=Get-JWTDetails($returnValue)
-            $certInfo=$values.response.key.key
-            $privKey=($values.response.key.key.key_hsm -replace '[^A-Za-z0-9+/=]', '')
-            $padLength = 4 - ($cleanString.Length % 4)
-            $privKey += '=' * $padLength
-            $decodedBytes = [System.Convert]::FromBase64String($privKey)
-            $decodedText = [System.Text.Encoding]::UTF8.GetString($decodedBytes)
-
+        $Key=($KeyURL -split "/")
+        $vaultBaseUrl=($key[0] + "//" + $key[2])
+        $KeyDetail=$keyUrl -split "/keys/" -split "/"
+        $KeyName=$Keydetail[3]
+        $KeyVersion=$KeyDetail[4]
+        if ([string]::IsNullOrEmpty($keyVersion)) {
+            $kvReleaseKeyUrl = "{0}/keys/{1}/release?api-version=7.3" -f $vaultBaseUrl, $keyName
+        }else{
+            $kvReleaseKeyUrl = "{0}/keys/{1}/{2}/release?api-version=7.3" -f $vaultBaseUrl, $keyName, $keyVersion
         }
-        $cleanString = ($1.response.key.key.key_hsm -replace '[^A-Za-z0-9+/=]', '')
         
+        $kvReleaseKeyHeaders = @{
+            Authorization  = "Bearer $kvAccessToken"
+            'Content-Type' = 'application/json'
+        }
         
-        
-        
-        return $retuenme
+        $kvReleaseKeyBody = @{
+            target = $attestedPlatformReportJwt
+        }
+        $kvReleaseKeyResponse = Invoke-WebRequest -Method POST -Uri $kvReleaseKeyUrl -Headers $kvReleaseKeyHeaders -Body ($kvReleaseKeyBody | ConvertTo-Json)
+        if ($kvReleaseKeyResponse.StatusCode -ne 200) {
+            Write-Error -Message "Unable to perform release key operation."
+            Write-Error -Message $kvReleaseKeyResponse.Content
+        }
+        else {
+            $kvReleaseKeyResponse.Content | ConvertFrom-Json
+            $retuenme=$kvReleaseKeyResponse.Content | ConvertFrom-Json
+            if ($retuenme.count -gt 1){
+                $returnValue=$retuenme[0].value
+                $values=Get-JWTDetails($returnValue)
+                $certInfo=$values.response.key.key
+                $privKey=($values.response.key.key.key_hsm -replace '[^A-Za-z0-9+/=]', '')
+                $padLength = 4 - ($cleanString.Length % 4)
+                $privKey += '=' * $padLength
+                $decodedBytes = [System.Convert]::FromBase64String($privKey)
+                $decodedText = [System.Text.Encoding]::UTF8.GetString($decodedBytes)
 
+            }
+            return $retuenme
+        }     
     }
 }
   
