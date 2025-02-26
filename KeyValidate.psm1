@@ -115,12 +115,22 @@ Function Attest($path,$attestationTenant){
     if (!$attestedPlatformReportJwt.StartsWith("eyJ")) {
         throw "AttestationClient failed to get an attested platform report."
     }else{
-        write-host " OK" -ForegroundColor Green -NoNewline 
+        write-host " OK" -ForegroundColor Green 
         return $attestedPlatformReportJwt
     }
     
 }
 
+Function DecodeBase64($inputtext){
+    $cleanString = ($inputtext -replace '[^A-Za-z0-9+/=]', '')
+    $padLength = 4 - ($cleanString.Length % 4)
+    If ($padLength -ne 4){
+        $cleanString += '=' * $padLength
+    }
+    $decodedBytes = [System.Convert]::FromBase64String($cleanString)
+    $decodedText = [System.Text.Encoding]::UTF8.GetString($decodedBytes)
+    return $decodedText
+}
 Function ValidateAZModule{
     #validate if the AZ module is available and if user is signed-in
     write-host "AZ.Accounts module " -NoNewline -ForegroundColor Blue
